@@ -53,8 +53,8 @@ def carregar_dados():
         "sku_marketplace_id",
         "numero_pedido",
         "valor_liquido",
-        "valor_final",            # de sku_marketplace
-        "repasse_liquido_evento", # de evento_centauro
+        "valor_final",
+        "repasse_liquido_evento",
         "data_comissao",
         "porcentagem",
         "comissao_calc",
@@ -65,9 +65,7 @@ def carregar_dados():
     df = df[colunas_desejadas]
 
     # Normalização dos tipos de evento
-    df["tipo_evento_normalizado"] = df["tipo_evento"].apply(
-        normalizar_tipo_evento
-    )
+    df["tipo_evento_normalizado"] = df["tipo_evento"].apply(normalizar_tipo_evento)
 
     return df
 
@@ -75,7 +73,6 @@ def carregar_dados():
 def normalizar_tipo_evento(evento):
     """
     Mapeia variantes de tipos de evento para nomes padronizados.
-    Inclui as variações de 'Descontar Retroativo' também.
     """
     if pd.isnull(evento):
         return "Desconhecido"
@@ -83,64 +80,55 @@ def normalizar_tipo_evento(evento):
     evento = evento.strip().lower()
 
     mapping = {
-        # Repasse Normal
         "repasse normal": "Repasse Normal",
         "repasse - normal": "Repasse Normal",
-        "repassse normal": "Repasse Normal",  # Possíveis erros de digitação
+        "repassse normal": "Repasse Normal",   # Possíveis erros de digitação
         "repassse - normal": "Repasse Normal",
 
-        # Descontar Hove/Houve
         "descontar hove": "Descontar Hove/Houve",
         "descontar houve": "Descontar Hove/Houve",
         "descontar - houve": "Descontar Hove/Houve",
         "descontar - hove": "Descontar Hove/Houve",
 
-        # Descontar Reversa
         "descontar reversa centauro envios": "Descontar Reversa Centauro Envios",
         "descontar - reversa centauro envios": "Descontar Reversa Centauro Envios",
 
-        # Ajuste de ciclo
         "ajuste de ciclo": "Ajuste de Ciclo",
 
-        # Descontar Retroativo (várias variações)
         "descontar retroativo": "Descontar Retroativo",
         "descontar - retroativo": "Descontar Retroativo",
         "descontar retroativo sac": "Descontar Retroativo",
         "descontar - retroativo sac": "Descontar Retroativo",
     }
-
     return mapping.get(evento, "Outros")
 
 
 def checar_erro_comissao(row):
     """
-    Exemplo: se quiser validar a comissão usando repasse_liquido_evento,
-    troque row["valor_final"] por row["repasse_liquido_evento"] abaixo.
+    Verifica se, para eventos de 'Repasse Normal', o valor_final está correto
+    com base na porcentagem de comissão.
     """
     if row["tipo_evento_normalizado"] != "Repasse Normal":
-        return ""  # Ignorar se não for repasse normal
+        return ""
 
     if pd.isnull(row["porcentagem"]):
-        return ""  # Sem porcentagem => não valida
+        return ""
 
     vl_liquido = round(row["valor_liquido"], 2)
-    # Se você quer comparar com 'repasse_liquido_evento', descomente a linha abaixo
-    # vl_final = round(row["repasse_liquido_evento"], 2)
-    vl_final = round(row["valor_final"], 2)  # MANTENDO do jeito que estava
-
+    vl_final = round(row["valor_final"], 2)  # Mantendo a lógica original
     porcent = round(row["porcentagem"], 4)
-    valor_calc = round(vl_liquido - (vl_liquido * porcent), 2)
 
+    valor_calc = round(vl_liquido - (vl_liquido * porcent), 2)
     if valor_calc != vl_final:
         return "ERRO"
     else:
         return ""
 
 
-
 def checar_erros_adicionais(row):
     """
-    Se quiser marcar erro para repasse_liquido_evento < 0, troque row["valor_final"] por row["repasse_liquido_evento"].
+    Marca erros adicionais (valor final negativo, falta de comissão, etc.) para repasse normal.
+    Também marca Erro Devolução se erro_descontar == "ERRO_DEVOLUCAO".
     """
     erros = []
     if row["tipo_evento_normalizado"] == "Repasse Normal":
@@ -164,25 +152,17 @@ def checar_erros_adicionais(row):
 
 def filtrar_por_erros(df, erros_selecionados):
     """
-    Retorna apenas linhas que contenham algum dos erros selecionados,
-    se 'erros_selecionados' não estiver vazio.
+    Retorna apenas linhas que contenham algum dos erros selecionados, se houver.
     """
     if not erros_selecionados:
-        return df  # sem filtro de erro
-
-    mask = df["lista_erros"].apply(
-        lambda lista: any(e in lista for e in erros_selecionados)
-    )
+        return df
+    mask = df["lista_erros"].apply(lambda lista: any(e in lista for e in erros_selecionados))
     return df[mask]
 
 
 def verificar_descontar_hove(df):
     """
-    Verifica, para cada numero_pedido que tenha eventos 'Repasse Normal' e
-    'Descontar Hove/Houve',
-    se o |valor_liquido| da 'Repasse Normal' é diferente do |repasse_liquido_evento| da 'Descontar Hove/Houve'.
-    Se diferente, marca como "ERRO_DEVOLUCAO".
-    Retorna um DataFrame com os resultados (numero_pedido, valor_liquido_repasse_normal, repasse_liquido_evento_descontar_houve, erro_descontar).
+    Verifica se, para "Repasse Normal" + "Descontar Hove/Houve", os valores absolutos batem.
     """
     subset = df[["numero_pedido", "tipo_evento_normalizado",
                  "valor_liquido", "repasse_liquido_evento"]].copy()
@@ -199,7 +179,6 @@ def verificar_descontar_hove(df):
                 repasse_liquido_evento_descontar = row["repasse_liquido_evento"]
 
         if (valor_liquido_repasse_normal is not None) and (repasse_liquido_evento_descontar is not None):
-            # Comparação dos valores absolutos arredondados para 2 casas
             if round(abs(valor_liquido_repasse_normal), 2) != round(abs(repasse_liquido_evento_descontar), 2):
                 erro = "ERRO_DEVOLUCAO"
             else:
@@ -217,25 +196,15 @@ def verificar_descontar_hove(df):
         "repasse_liquido_evento_descontar_houve",
         "erro_descontar"
     ])
-
     df_result = df_result.drop_duplicates(subset=["numero_pedido"])
     return df_result
 
-# =========================================================================
-# 3. Função específica para Descontar Retroativo
-# =========================================================================
 
 def verificar_descontar_retroativo(df):
     """
-    Agrupa (numero_pedido) para 'Descontar Retroativo', soma repasse_liquido_evento.
-    - Se o valor absoluto dessa soma for igual ao valor_liquido do pedido (e valor_liquido != 0),
-      marca como erro ("ERRO_DESCONTAR_RETROATIVO").
-    - Gera coluna de Diferença = valor_liquido + soma repasse_liquido_evento
-      (verde se >0, vermelho se <0).
-    Retorna DataFrame com: numero_pedido, valor_liquido, soma_descontar_retroativo,
-    diferença e flag de erro.
+    Agrupa 'Descontar Retroativo' e soma repasse_liquido_evento;
+    marca ERRO_DESCONTAR_RETROATIVO se a soma for igual ao valor_liquido (em valor absoluto).
     """
-    # Filtrar somente quem é "Descontar Retroativo"
     subset = df[df["tipo_evento_normalizado"] == "Descontar Retroativo"].copy()
     if subset.empty:
         return pd.DataFrame(columns=[
@@ -246,26 +215,21 @@ def verificar_descontar_retroativo(df):
             "erro_descontar_retroativo"
         ])
 
-    # Agrupar
     grouped = subset.groupby("numero_pedido").agg({
-        "valor_liquido": "first",  # Pega o primeiro valor_liquido do pedido
+        "valor_liquido": "first",
         "repasse_liquido_evento": "sum"
     }).reset_index()
 
-    # Renomeia a soma para ficar claro
     grouped.rename(columns={"repasse_liquido_evento": "soma_descontar_retroativo"}, inplace=True)
-
-    # Calcula diferença
     grouped["Diferenca"] = grouped["valor_liquido"] + grouped["soma_descontar_retroativo"]
 
-    # Função para verificar erro
     def verificar_erro(row):
-        if round(abs(row["soma_descontar_retroativo"]), 2) == round(abs(row["valor_liquido"]), 2) and round(row["valor_liquido"], 2) != 0:
+        if (round(abs(row["soma_descontar_retroativo"]), 2) == round(abs(row["valor_liquido"]), 2)
+           and round(row["valor_liquido"], 2) != 0):
             return "ERRO_DESCONTAR_RETROATIVO"
         return ""
 
     grouped["erro_descontar_retroativo"] = grouped.apply(verificar_erro, axis=1)
-
     return grouped
 
 
@@ -331,15 +295,11 @@ def main():
 
     # Filtro por Número do Pedido
     if pedido_filtro:
-        df_filtrado = df_filtrado[
-            df_filtrado["numero_pedido"].astype(str).str.contains(pedido_filtro, na=False)
-        ]
+        df_filtrado = df_filtrado[df_filtrado["numero_pedido"].astype(str).str.contains(pedido_filtro, na=False)]
 
     # Filtro por Tipo de Evento
     if evento_filtro:
-        df_filtrado = df_filtrado[
-            df_filtrado["tipo_evento_normalizado"].isin(evento_filtro)
-        ]
+        df_filtrado = df_filtrado[df_filtrado["tipo_evento_normalizado"].isin(evento_filtro)]
 
     # Filtro por Data de Comissão
     if data_ini and data_fim:
@@ -354,8 +314,9 @@ def main():
     df_filtrado = filtrar_por_erros(df_filtrado, erros_selecionados)
 
     # 6) Abas
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "Visão Geral",
+        "Visão Geral Anymarket",
         "Erros de Comissão",
         "Erros de Descontar Hove/Houve",
         "Descontar Retroativo",
@@ -367,15 +328,10 @@ def main():
     with tab1:
         st.markdown("## Visão Geral dos Dados Filtrados")
 
-        # Observação importante:
-        # Aqui, vamos exibir repasse_liquido_evento no lugar de valor_final.
-        # Então podemos excluir a coluna "valor_final" do "sku_marketplace"
-        # e usar no DataFrame "Valor Final" = repasse_liquido_evento.
-
         colunas_visao_geral = [
             "numero_pedido",
             "valor_liquido",
-            "repasse_liquido_evento",  # <--- substitui o valor_final
+            "repasse_liquido_evento",
             "tipo_evento",
             "data_evento",
             "porcentagem",
@@ -385,7 +341,6 @@ def main():
         ]
         df_visao_geral = df_filtrado[colunas_visao_geral].copy()
 
-        # Renomeia repasse_liquido_evento para "Valor Final"
         df_visao_geral = df_visao_geral.rename(columns={
             "comissao_calc": "Comissão",
             "lista_erros": "Erros",
@@ -404,10 +359,8 @@ def main():
             "Porcentagem": "{:.2f}",
             "Comissão": "{:.2f}"
         })
+        st.dataframe(data=df_visao_geral_styled, width=20000000)
 
-        st.dataframe(df_visao_geral_styled)
-
-        # --- Resumo ---
         st.markdown("### Resumo de Registros")
         qtd_total = len(df_filtrado)
         qtd_erro_comissao = sum(df_filtrado["erro_comissao"] == "ERRO")
@@ -417,7 +370,7 @@ def main():
         df_err_devolucao = df_err_devolucao.drop_duplicates(subset=["numero_pedido"])
         qtd_erro_devolucao = len(df_err_devolucao)
 
-        # Aqui soma_val_final será a soma de repasse_liquido_evento ao invés de sku_marketplace.valor_final
+        # Soma usando repasse_liquido_evento
         soma_val_final = df_filtrado["repasse_liquido_evento"].sum()
 
         colA, colB, colC, colD = st.columns(4)
@@ -426,17 +379,131 @@ def main():
         colC.metric("Erros de Devolução", qtd_erro_devolucao)
         colD.metric("Soma Valor Final", f"{soma_val_final:,.2f}")
 
-        # Quantos têm algum erro adicional
         df_filtrado["tem_algum_erro"] = df_filtrado["lista_erros"].apply(lambda x: len(x) > 0)
         qtd_qualquer_erro = df_filtrado["tem_algum_erro"].sum()
         st.info(f"Registros com *qualquer erro*: {qtd_qualquer_erro}")
 
-    
-
     # ---------------------------------------------------------------------
-    # ABA 2: ERROS DE COMISSÃO
+    # ABA 2: VISÃO GERAL ANYMARKET
     # ---------------------------------------------------------------------
     with tab2:
+        st.markdown("## Visão Geral Anymarket")
+
+        # 1) Carrega dados da tabela 'vendas' para obter valor_vendas
+        query_vendas = text("""
+            SELECT
+                id AS venda_id,
+                sku_marketplace_id,
+                valor_liquido AS valor_vendas
+            FROM vendas
+        """)
+        df_vendas = pd.read_sql(query_vendas, engine)
+
+        # 2) Merge com df_filtrado para comparar valores
+        df_any = df_filtrado.merge(
+            df_vendas,
+            how="left",
+            left_on="sku_marketplace_id",
+            right_on="sku_marketplace_id",
+            suffixes=("", "_vendas")
+        )
+
+        # Substituir NaN em valor_vendas por 0 => venda não encontrada
+        df_any["valor_vendas"] = df_any["valor_vendas"].fillna(0)
+
+        # 3) Criar e aplicar função para verificar erros
+        def checar_erros_anymarket(row):
+            erros = []
+            # Erro se não encontrar a venda (valor_vendas == 0)
+            if row["valor_vendas"] == 0:
+                erros.append("ERRO_VENDA_NAO_ENCONTRADA")
+
+            # Erro se for Repasse Normal e os valores divergem
+            if (
+                row["tipo_evento_normalizado"] == "Repasse Normal"
+                and round(row["valor_liquido"], 2) != round(row["valor_vendas"], 2)
+                and row["valor_vendas"] != 0
+            ):
+                erros.append("ERRO_VALORES_DIVERGENTES")
+
+            return erros
+
+        df_any["erros_anymarket"] = df_any.apply(checar_erros_anymarket, axis=1)
+
+        # === NOVO: Filtro para exibir "Todos", "SEM_ERRO", "ERRO_VENDA_NAO_ENCONTRADA", "ERRO_VALORES_DIVERGENTES" ===
+        st.subheader("Filtrar por Erros Anymarket")
+        error_options = [
+            "Todos",
+            "SEM_ERRO",
+            "ERRO_VENDA_NAO_ENCONTRADA",
+            "ERRO_VALORES_DIVERGENTES"
+        ]
+        selected_any_error = st.selectbox("Selecione o tipo de erro a exibir", error_options, index=0)
+
+        # 4) Montar DF de exibição
+        colunas_any = [
+            "numero_pedido",
+            "tipo_evento_normalizado",
+            "valor_liquido",       # do sku_marketplace
+            "valor_vendas",        # do vendas
+            "erros_anymarket"
+        ]
+        df_any_exibe = df_any[colunas_any].copy()
+
+        # Renomear colunas para melhor visualização
+        df_any_exibe = df_any_exibe.rename(columns={
+            "numero_pedido": "Número do Pedido",
+            "valor_liquido": "Valor (sku_marketplace)",
+            "valor_vendas": "Valor (vendas)",
+            "tipo_evento_normalizado": "Tipo de Evento",
+            "erros_anymarket": "Erros Anymarket"
+        })
+
+        # Remoção de duplicatas: mesmo pedido + mesmo tipo de evento
+        df_any_exibe = df_any_exibe.drop_duplicates(
+            subset=["Número do Pedido", "Tipo de Evento"]
+        )
+
+        # Filtrar de acordo com o selectbox
+        # Transformar "Erros Anymarket" em uma string para facilitar a checagem
+        df_any_exibe["ErrosStr"] = df_any_exibe["Erros Anymarket"].apply(lambda lista: ",".join(lista) if lista else "")
+
+        if selected_any_error == "SEM_ERRO":
+            # mostrar só registros onde ErrosStr está vazio
+            df_any_exibe = df_any_exibe[df_any_exibe["ErrosStr"] == ""]
+        elif selected_any_error == "ERRO_VENDA_NAO_ENCONTRADA":
+            df_any_exibe = df_any_exibe[df_any_exibe["ErrosStr"].str.contains("ERRO_VENDA_NAO_ENCONTRADA")]
+        elif selected_any_error == "ERRO_VALORES_DIVERGENTES":
+            df_any_exibe = df_any_exibe[df_any_exibe["ErrosStr"].str.contains("ERRO_VALORES_DIVERGENTES")]
+        else:
+            # "Todos" => não filtra
+            pass
+
+        # Format
+        df_any_exibe_style = df_any_exibe.style.format({
+            "Valor (sku_marketplace)": "{:.2f}",
+            "Valor (vendas)": "{:.2f}"
+        })
+        st.dataframe(df_any_exibe_style)
+
+        # 5) Resumo de erros
+        todas_ocorrencias = []
+        for lista_e in df_any_exibe["Erros Anymarket"]:
+            todas_ocorrencias.extend(lista_e)
+
+        qtd_erro_venda_nao_encontrada = sum(e == "ERRO_VENDA_NAO_ENCONTRADA" for e in todas_ocorrencias)
+        qtd_erro_valores_diverg = sum(e == "ERRO_VALORES_DIVERGENTES" for e in todas_ocorrencias)
+
+        colA1, colA2 = st.columns(2)
+        colA1.metric("ERRO_VENDA_NAO_ENCONTRADA", qtd_erro_venda_nao_encontrada)
+        colA2.metric("ERRO_VALORES_DIVERGENTES", qtd_erro_valores_diverg)
+
+        st.info(f"{len(df_any_exibe)} registro(s) exibidos na 'Visão Geral Anymarket'")
+
+    # ---------------------------------------------------------------------
+    # ABA 3: ERROS DE COMISSÃO
+    # ---------------------------------------------------------------------
+    with tab3:
         st.markdown("## Erros de Comissão (Repasse Normal)")
         df_err = df_filtrado[df_filtrado["erro_comissao"] == "ERRO"]
         if df_err.empty:
@@ -477,9 +544,9 @@ def main():
             st.dataframe(df_err_vis_styled)
 
     # ---------------------------------------------------------------------
-    # ABA 3: ERROS DE DESCONTAR HOVE/HOUVE
+    # ABA 4: ERROS DE DESCONTAR HOVE/HOUVE
     # ---------------------------------------------------------------------
-    with tab3:
+    with tab4:
         st.markdown("## Erros de Descontar Hove/Houve")
         df_descontar_hove_erro = df_filtrado[
             (df_filtrado["tipo_evento_normalizado"] == "Descontar Hove/Houve") &
@@ -504,7 +571,6 @@ def main():
             "data_ciclo": "Data do Ciclo"
         })
 
-        # Criar coluna de Diferença
         df_descontar_hove_erro["Diferença"] = df_descontar_hove_erro["Valor Final"] + df_descontar_hove_erro["Valor Pedido"]
 
         def color_diff(val):
@@ -515,7 +581,7 @@ def main():
             "Valor Pedido": "{:.2f}",
             "Valor Final": "{:.2f}",
             "Diferença": "{:.2f}"
-        }).applymap(color_diff, subset=["Diferença"])
+        }).map(color_diff, subset=["Diferença"])
 
         if df_descontar_hove_erro.empty:
             st.info("Nenhum erro de Descontar Hove/Houve com base nos filtros.")
@@ -524,11 +590,10 @@ def main():
             st.dataframe(styled_df_hove)
 
     # ---------------------------------------------------------------------
-    # ABA 4: DESCONTAR RETROATIVO
+    # ABA 5: DESCONTAR RETROATIVO
     # ---------------------------------------------------------------------
-    with tab4:
+    with tab5:
         st.markdown("## Verificação: Descontar Retroativo")
-        # Agrupar e verificar se a soma do repasse_liquido_evento bate com o valor_liquido
         df_retroativo = verificar_descontar_retroativo(df_filtrado)
 
         if df_retroativo.empty:
@@ -540,7 +605,6 @@ def main():
                 color = 'green' if val > 0 else 'red' if val < 0 else 'black'
                 return f'color: {color}'
 
-            # Renomear colunas para exibir
             df_retroativo_exibe = df_retroativo.rename(columns={
                 "numero_pedido": "Número do Pedido",
                 "valor_liquido": "Valor Pedido",
@@ -549,14 +613,12 @@ def main():
                 "erro_descontar_retroativo": "Erro Retroativo"
             })
 
-            # Aplicar estilo
             df_retroativo_styled = df_retroativo_exibe.style.format({
                 "Valor Pedido": "{:.2f}",
                 "Soma Retroativo": "{:.2f}",
                 "Diferença": "{:.2f}"
-            }).applymap(color_diff, subset=["Diferença"])
+            }).map(color_diff, subset=["Diferença"])
 
-            # Quantos têm erro
             qtd_erro_retro = (df_retroativo_exibe["Erro Retroativo"] == "ERRO_DESCONTAR_RETROATIVO").sum()
             if qtd_erro_retro > 0:
                 st.error(f"{qtd_erro_retro} registro(s) com erro de Descontar Retroativo.")
@@ -566,9 +628,9 @@ def main():
             st.dataframe(df_retroativo_styled)
 
     # ---------------------------------------------------------------------
-    # ABA 5: DUPLICATAS
+    # ABA 6: DUPLICATAS
     # ---------------------------------------------------------------------
-    with tab5:
+    with tab6:
         st.markdown("## Possíveis Duplicatas (Mesmo Pedido + Mesmo Tipo de Evento)")
         df_dups = df_filtrado.groupby(["numero_pedido", "tipo_evento_normalizado"]).size().reset_index(name="count")
         df_dups = df_dups[df_dups["count"] > 1]
@@ -582,21 +644,16 @@ def main():
                 "count": "Quantidade"
             })
 
-            # Se quiser formato float:
             df_dups["Quantidade"] = df_dups["Quantidade"].astype(float)
-
-            df_dups_styled = df_dups.style.format({
-                "Quantidade": "{:.2f}"
-            })
+            df_dups_styled = df_dups.style.format({"Quantidade": "{:.2f}"})
             st.dataframe(df_dups_styled)
 
     # ---------------------------------------------------------------------
-    # ABA 6: GRÁFICOS
+    # ABA 7: GRÁFICOS
     # ---------------------------------------------------------------------
-    with tab6:
+    with tab7:
         st.markdown("## Gráficos e Visualizações")
 
-        # 1) Tipo de Evento (barras)
         st.subheader("Distribuição de Tipo de Evento")
         if not df_filtrado.empty:
             cont_eventos = df_filtrado["tipo_evento_normalizado"].value_counts()
@@ -604,7 +661,6 @@ def main():
         else:
             st.info("Sem dados para exibir.")
 
-        # 2) Erros em Barras e Pizza
         st.subheader("Distribuição de Erros Encontrados")
         todas_ocorrencias = []
         for lista_e in df_filtrado["lista_erros"]:
@@ -625,5 +681,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # Rode com: streamlit run arquivo.py
     main()
