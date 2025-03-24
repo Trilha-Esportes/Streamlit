@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt  # Para gráficos de pizza/barras
 # =========================================================================
 # 1. Configurações de Conexão ao Banco
 # =========================================================================
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASS = os.getenv("DB_PASSWORD", "U7urkInVDg[(D^{&")
+DB_USER = os.getenv("DB_USER", "guilbert")
+DB_PASS = os.getenv("DB_PASSWORD", "v4Ai>+uc#JFqXy")
 DB_HOST = os.getenv("DB_HOST", "34.130.95.218")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "postgres")
