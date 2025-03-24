@@ -43,7 +43,7 @@ def carregar_dados_geral():
             (cp.porcentagem * sm.valor_liquido) AS comissao_calc,
             ec.tipo_evento,
             ec.repasse_liquido_evento,
-            ec.data AS data_evento,
+            v.data AS data_evento,
             ec.data_repasse AS data_ciclo
         FROM sku_marketplace sm
         LEFT JOIN marketplaces mk
