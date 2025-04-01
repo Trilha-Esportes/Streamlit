@@ -10,45 +10,44 @@ jobs:
     runs-on: ubuntu-latest
     environment: Trilha-Esporte
     env:
-      IMAGE_NAME: us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/streamlit-repo/streamlit-app:${{ github.sha }}
+      IMAGE_NAME: "us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/streamlit-repo/streamlit-app:${{ github.sha }}"
 
     steps:
       # 🔹 Checkout do repositório
       - name: Checkout do código
         uses: actions/checkout@v4
 
-      # 🔹 Configurar autenticação com Google Cloud
+      # 🔹 Autenticar no Google Cloud
       - name: Autenticar no Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-      # 🔹 Configurar o Google Cloud SDK
-      - name: Configurar gcloud
-        run: |
-          gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
-          gcloud auth configure-docker --quiet
+      # 🔹 Configurar autenticação do Docker para o Artifact Registry
+      - name: Configurar autenticação do Docker
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
-      # 🔹 Construir a imagem Docker e enviar para o Google Artifact Registry
+      # 🔹 Construir e enviar imagem Docker
       - name: Construir e enviar imagem Docker
         run: |
           echo "Construindo a imagem Docker..."
-          docker build -t $IMAGE_NAME .
+          docker build -t ${IMAGE_NAME} .
 
           echo "Enviando a imagem para o Google Artifact Registry..."
-          docker push $IMAGE_NAME
+          docker push ${IMAGE_NAME}
 
       # 🔹 Fazer o deploy no Cloud Run
       - name: Deploy no Cloud Run
         run: |
           echo "Realizando deploy no Cloud Run..."
           gcloud run deploy streamlit-app \
-            --image=$IMAGE_NAME \
+            --image=${IMAGE_NAME} \
             --region=us-central1 \
             --platform=managed \
             --port=8501 \
-            --set-env-vars="DB_USER=${{ secrets.DB_USER }},DB_PASSWORD=${{ secrets.DB_PASSWORD }},DB_HOST=${{ secrets.DB_HOST }},DB_NAME=${{ secrets.DB_NAME }}"
+            --allow-unauthenticated \
+             --timeout=2000s \
+            --set-env-vars "DB_USER=${{ secrets.DB_USER }},DB_PASSWORD=${{ secrets.DB_PASSWORD }},DB_HOST=${{ secrets.DB_HOST }},DB_PORT=${{ secrets.DB_PORT }},DB_NAME=${{ secrets.DB_NAME }}",STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 
       # 🔹 Mostrar a URL do serviço
       - name: Exibir URL do serviço
