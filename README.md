@@ -1,59 +1,125 @@
-# Documentação Técnica do Código
+# Documentação do Projeto (Visão Geral)
 
-## Visão Geral
-Este código é uma aplicação em Streamlit que se conecta a um banco de dados PostgreSQL para analisar e exibir dados financeiros e comerciais, identificando possíveis erros em transações, cálculos de comissão e descontos diversos. A aplicação permite a interação por meio de filtros personalizados, visualização detalhada dos dados, resumo financeiro consolidado e gráficos representativos.
+Este documento descreve **passo a passo** o funcionamento do aplicativo Streamlit que carrega e analisa dados de vendas, comissões e eventos de repasse.
 
-## Configurações de Conexão ao Banco
-O banco de dados PostgreSQL é acessado utilizando credenciais armazenadas em variáveis de ambiente, com valores padrão específicos para desenvolvimento.
+## 1. Configuração de Conexão ao Banco
 
-## Funções Principais
+No início do código, definimos variáveis de ambiente para configurar a conexão com o banco PostgreSQL:
+- `DB_USER`
+- `DB_PASS`
+- `DB_HOST`
+- `DB_PORT`
+- `DB_NAME`
 
-### carregar_dados_geral
-Carrega e consolida os dados das tabelas `sku_marketplace`, `marketplaces`, `vendas`, `comissoes_pedido` e `evento_centauro`. Realiza limpeza, normalização e preenchimento de valores nulos para garantir integridade dos dados.
+Caso não sejam encontradas no ambiente, assumimos valores padrão. Em seguida, é criada uma `engine` do SQLAlchemy para se comunicar com o banco de dados.
 
-### normalizar_tipo_evento
-Padroniza os nomes dos tipos de eventos para evitar inconsistências causadas por pequenas diferenças na escrita.
+## 2. Funções Auxiliares
 
-### checar_erro_comissao
-Verifica discrepâncias no cálculo das comissões com tolerância de até R$0,05 para eventos de "Repasse Normal".
+### `carregar_dados_geral()`
+- Executa uma query SQL que faz LEFT JOIN em várias tabelas: 
+  - `sku_marketplace` (informações sobre os SKUs e pedidos)
+  - `marketplaces` (nome do marketplace)
+  - `vendas` (informações sobre o valor do pedido)
+  - `comissoes_pedido` (porcentagem e datas de comissão)
+  - `evento_centauro` (repasse, tipo de evento, data de repasse)
+- Cria um DataFrame resultante unificando todos esses dados.
+- Preenche valores nulos e normaliza o tipo de evento (ex.: "repasse normal", "repassse normal") em "Repasse Normal" etc.
 
-### checar_erros_adicionais
-Identifica erros adicionais relacionados a valores negativos, falta de comissão, ausência de data ou cálculos incorretos.
+### `normalizar_tipo_evento(evento)`
+- Recebe uma string que descreve o tipo de evento e retorna um valor padronizado (exemplo: "Repasse Normal", "Descontar Retroativo", etc.).
+- Serve para unificar variações ortográficas comuns.
 
-### verificar_descontar_hove
-Compara valores dos eventos "Repasse Normal" com "Descontar Hove/Houve" para detectar inconsistências.
+### `checar_erro_comissao(row)`
+- Verifica se, nos casos de "Repasse Normal", o valor repassado (`valor_final`) está de acordo com a conta: `valor_liquido - (valor_liquido * porcentagem)`.
+- Usa tolerância de R\$0,05 para não marcar diferenças mínimas como erro.
+- Se a diferença for maior que 5 centavos, retorna "ERRO".
 
-### verificar_descontar_retroativo
-Agrupa e verifica erros nos eventos do tipo "Descontar Retroativo".
+### `checar_erros_adicionais(row)`
+- Lista diversos erros adicionais:
+  - Valor Final Negativo
+  - Falta de Comissão
+  - Falta de Data de Comissão
+  - Erro Cálculo Comissão (quando `checar_erro_comissao` já marcou "ERRO")
+  - Erro Devolução (quando a verificação de “Descontar Hove/Houve” falha)
 
-### carregar_vendas
-Carrega de forma otimizada (cacheada) os dados de vendas do banco.
+### `filtrar_por_erros(df, erros_selecionados)`
+- Recebe o DataFrame e uma lista de erros marcados (ex.: "Falta de Comissão", "Erro Cálculo Comissão").
+- Retorna apenas as linhas em que `lista_erros` contém ao menos um dos itens selecionados.
 
-### montar_resumo_financeiro
-Cria um DataFrame consolidado que resume as informações financeiras por pedido, incluindo valor total, comissão, valores recebidos e descontados, situação do pagamento e situação final.
+### `verificar_descontar_hove(df)`
+- Verifica se, em um mesmo pedido, existe um "Repasse Normal" e um "Descontar Hove/Houve".
+- Checa se o valor do "Descontar Hove/Houve" bate exatamente com o valor do pedido repassado, para fins de devolução.
+- Se não bater, marca `erro_descontar` = "ERRO_DEVOLUCAO".
 
-## Interface Streamlit
-A interface é organizada em quatro abas principais:
+### `verificar_descontar_retroativo(df)`
+- Similar ao anterior, mas para o caso de “Descontar Retroativo”.
+- Soma todos os valores dos eventos "Descontar Retroativo" e checa se é igual ao valor do pedido. Se for, marca "ERRO_DESCONTAR_RETROATIVO".
 
-### 1. Visão Geral
-Exibe informações detalhadas dos dados filtrados, incluindo métricas gerais, erros identificados e visão específica para transações relacionadas ao marketplace Anymarket.
+### `carregar_vendas()`
+- Realiza uma query simples para ler a tabela `vendas` e retorna num DataFrame com colunas `venda_id`, `sku_marketplace_id` e `valor_vendas`.
 
-### 2. Resumo Financeiro
-Apresenta um resumo consolidado das transações financeiras, permitindo filtragem adicional por situação financeira (correto, pago, erro, etc.).
+### `montar_resumo_financeiro(df_geral, df_vendas)`
+- Faz um merge (`df_geral` + `df_vendas`) para obter `valor_vendas`.
+- Para cada pedido, calcula:
+  - Valor total do pedido (maior valor encontrado de `valor_vendas`).
+  - Comissão esperada = maior `comissao_calc`.
+  - Valor a receber = valor_total - comissão.
+  - Valor recebido = max(`valor_final`) onde `tipo_evento_normalizado` = "Repasse Normal".
+  - Valor descontado (soma de eventos "Descontar Hove/Houve" e "Descontar Retroativo").
+  - Desconto frete (eventos de "Descontar Reversa Centauro Envios").
+  - Situação do pagamento:
+    - "pago" se a diferença for < 0.05
+    - "pago a maior"
+    - "pago a menor"
+    - "nao pago"
+  - Situação final (pode ser "Erro Devolução", se for detectado erro, ou a própria situação do pagamento)
+- Retorna um DataFrame para exibição.
 
-### 3. Erros de Descontar Hove/Houve
-Lista especificamente os erros relacionados aos descontos de devoluções identificados pela função `verificar_descontar_hove`.
+## 3. Interface Streamlit (Função `main()`)
 
-### 4. Gráficos
-Disponibiliza representações visuais dos dados filtrados, como gráficos de barras e pizza, que mostram a distribuição de tipos de eventos e erros encontrados.
+1. **Título**  
+   Apresenta o título "Painel de Análises e Filtros (Com Data/Ciclo)".
 
-## Uso de Cache
-A aplicação utiliza a funcionalidade de cache do Streamlit (`@st.cache_data`) para otimizar o carregamento repetido de dados do banco, melhorando significativamente o desempenho.
+2. **Sidebar**  
+   - Campos de filtro:
+     - Número do Pedido (`pedido_filtro`)
+     - Tipo(s) de Evento (`evento_filtro`)
+     - Data inicial/final de Comissão
+     - Erros a exibir
+   - Esses filtros impactam o DataFrame antes da exibição.
 
-## Considerações Técnicas
-- O código adota técnicas robustas para tratamento de valores monetários e porcentagens, considerando arredondamentos e tolerâncias.
-- Uso eficiente de Pandas para manipulação e análise de dados.
-- Streamlit para uma interface interativa e visualmente agradável.
+3. **Carregamento de Dados**  
+   - Chama `carregar_dados_geral()` para obter o DataFrame principal (`df`).
+   - Cria `df["erro_comissao"]` a partir de `checar_erro_comissao()`.
+   - Executa `verificar_descontar_hove(df)` e mescla no DataFrame para identificar divergências na devolução.
+   - Cria `df["lista_erros"]` com `checar_erros_adicionais()`.
 
-Este documento facilita o entendimento e manutenção do código, auxiliando no desenvolvimento futuro e na identificação rápida de pontos importantes da aplicação.
+4. **Filtros**  
+   - Aplica cada filtro (pedido, tipo de evento, data, erros) em `df_filtrado`.
+
+5. **Abas**  
+   - **Aba 1 (Visão Geral)**: exibe uma tabela com colunas selecionadas e algumas métricas. Inclui também a “Visão Geral Anymarket”, comparando `valor_liquido` e `valor_vendas`.
+   - **Aba 2 (Resumo Financeiro)**: constrói `df_financeiro` usando `montar_resumo_financeiro()` e exibe a tabela resultante, com métricas agregadas.
+   - **Aba 3 (Erros de Descontar Hove/Houve)**: exibe apenas os pedidos marcados com “ERRO_DEVOLUCAO”.
+   - **Aba 4 (Gráficos)**: mostra gráficos de barras e pizza sobre tipos de evento e erros encontrados.
+
+6. **Execução**  
+   - Se o arquivo for executado diretamente (`__main__`), chama `main()`.
+
+## 4. Pontos de Atenção
+
+- Ao configurar em produção, lembre-se de ajustar as variáveis de ambiente de banco de dados.
+- Se a performance cair, pode ser necessário otimizar as queries ou remover alguns LEFT JOINs.
+- Os filtros de data baseiam-se em `data_comissao`. Caso seja necessário filtrar por outra data (ex.: `data_evento`), é preciso ajustar o código.
+
+## 5. Possíveis Melhorias Futuras
+
+- Implementar paginação para grandes volumes de dados.
+- Implementar caching mais avançado (diferenciar datas, pedidos e etc.).
+- Adicionar testes automáticos (pytest) para validar se os cálculos de comissão e repasses estão corretos.
+- Exibir mais detalhes sobre divergências de valores (por exemplo, logs de por que a divergência ocorreu).
+
+---
+
+Qualquer dúvida, entre em contato com a equipe de desenvolvimento ou consulte a documentação interna dos endpoints e tabelas.
 
